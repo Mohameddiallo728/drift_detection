@@ -29,7 +29,7 @@ layout = dbc.Container([
         header="Dérive des données détectée !",
         is_open=False,
         dismissable=True,
-        duration=70000,  # Duration in milliseconds
+        duration=10000,  # Duration in milliseconds
         icon="danger",
         style={"position": "fixed", "top": 66, "right": 30, "width": 350, "background" : "#fff", "fontSize": "17px", "color":"#000"},
     ),
@@ -38,37 +38,47 @@ layout = dbc.Container([
 
 
 def update_metrics(n_intervals, is_open):
-    global accuracy, precision, recall, f1
+    global accuracy, precision, recall, f1, model, X_train, y_train
     try:
         # Générer des nouvelles données avec dérive
-        data_stream = ingest_data_stream_with_drift(df, drift_probability=1)
+        data_stream = ingest_data_stream_with_drift()
+
         new_data = next(data_stream)
         X_new = pd.DataFrame([new_data])[feature_columns]
-        y_new = pd.DataFrame([new_data])[target_column]
 
-        # Nettoyer les valeurs manquantes
-        X_new = X_new.dropna()
-        y_new = y_new.dropna()
-        if not X_new.empty and not y_new.empty:
-            # Ajouter de nouvelles données
-            global X_train, y_train
+        # Faire une prédiction pour l'Outcome
+        y_pred = model.predict(X_new) 
+        
+        # Assurez-vous que y_pred est en 0 ou 1
+        y_pred = (y_pred > 0.5).astype(int)
+
+        # Ajouter la prédiction au DataFrame
+        y_new = pd.Series([y_pred[0]], name=target_column)
+        
+        # Vérifiez si X_new existe déjà dans X_train pour éviter les doublons
+        if not X_train.equals(pd.concat([X_train, X_new]).drop_duplicates()):
             X_train = pd.concat([X_train, X_new], ignore_index=True)
             y_train = pd.concat([y_train, y_new], ignore_index=True)
-
-
-            # Réentraîner le modèle
-            global model
-            model.fit(X_train, y_train)
 
             # Détecter la dérive
             drift_detected, drift_scores = detect_drift(X_train, X_test, 0.09)
 
+            # Réentraîner le modèle
+            model.fit(X_train, y_train)
+
             # Enregistrer les métriques et les données
             if drift_detected:
-                drifted_data_list.append(new_data)
+                print(f"Drift Detected on : {new_data}")
+                print(f"Predicted as : {y_pred}")
+
+                if len(drifted_data_list) == 0 or new_data != drifted_data_list[-1]:
+                    drifted_data_list.append(new_data)
+
                 toast_message = notify_and_recommend(drift_detected, drift_scores, feature_columns, model, X_test, y_test)
+                accuracy, precision, recall, f1 = get_metrics(model, X_test, y_test)
+                
                 # Enregistrer les métriques et les données
-                save_metrics_and_data(drifted_data_list, accuracy_history, precision_history, recall_history, f1_history)
+                save_metrics_and_data(drifted_data_list, metrics)
                 return (
                     f"{accuracy:.2f}",
                     f"{precision:.2f}",
@@ -80,6 +90,8 @@ def update_metrics(n_intervals, is_open):
                 )
             else:
                 accuracy, precision, recall, f1 = get_metrics(model, X_test, y_test)
+                # Enregistrer les métriques et les données
+                save_metrics_and_data(drifted_data_list, metrics)
                 return (
                     f"{accuracy:.2f}",
                     f"{precision:.2f}",
@@ -90,13 +102,13 @@ def update_metrics(n_intervals, is_open):
                     X_train.to_dict('records')
                 )
         else:
-            # En cas d'absence de nouvelles données
+            # Si les nouvelles données sont déjà dans X_train, ne rien faire
             return (
                 f"{accuracy:.2f}",
                 f"{precision:.2f}",
                 f"{recall:.2f}",
                 f"{f1:.2f}",
-                "Aucune nouvelle donnée disponible",
+                "",
                 False,  # Ne pas montrer le toast
                 X_train.to_dict('records')
             )

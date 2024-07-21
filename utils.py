@@ -1,25 +1,21 @@
-# util.py
+ # util.py
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 from sklearn.model_selection import train_test_split
 from scipy.stats import ks_2samp
-import itertools
 import time
 from datetime import datetime
 import matplotlib.pyplot as plt
 import numpy as np
-import dash_html_components as html
+from dash import html
 import dash_bootstrap_components as dbc
 
 
 
 
 # Initialize global variables for storing metrics and drifted data
-accuracy_history = []
-precision_history = []
-recall_history = []
-f1_history = []
+metrics = []
 drifted_data_list = []
 feature_columns = ['Pregnancies', 'Glucose', 'BloodPressure', 'SkinThickness', 'Insulin', 'BMI', 'DiabetesPedigreeFunction', 'Age']
 target_column = 'Outcome'
@@ -74,10 +70,14 @@ def get_metrics(model, X_test, y_test):
     print(f"--"*20)
 
     # historisation 
-    accuracy_history.append(accuracy)
-    precision_history.append(precision)
-    recall_history.append(recall)
-    f1_history.append(f1)
+    metric = {
+        'Timestamp': datetime.now(),
+        'Accuracy': accuracy,
+        'Precision': precision,
+        'Recall': recall,
+        'F1 Score': f1
+    }
+    metrics.append(metric)
 
     return accuracy, precision, recall, f1
 
@@ -87,41 +87,43 @@ def generate_random_data():
     # Generate random values for each feature
     data = {
         'Pregnancies': np.random.randint(0, 20),
-        'Glucose': np.random.uniform(70, 200),
-        'BloodPressure': np.random.uniform(30, 120),
-        'SkinThickness': np.random.uniform(10, 100),
-        'Insulin': np.random.uniform(0, 600),
-        'BMI': np.random.uniform(15, 50),
-        'DiabetesPedigreeFunction': np.random.uniform(0, 2.5),
-        'Age': np.random.randint(20, 80)
+        'Glucose': np.random.randint(70, 200),
+        'BloodPressure': np.random.randint(30, 120),
+        'SkinThickness': np.random.randint(0, 100),
+        'Insulin': np.random.randint(0, 600),
+        'BMI': round(np.random.uniform(15, 50), 1),
+        'DiabetesPedigreeFunction': round(np.random.uniform(0, 2.5), 3),
+        'Age': np.random.randint(18, 80)
     }
     return pd.DataFrame([data])
 
 
 # Function to introduce drift into the data
-def introduce_drift(data, drift_probability=1):
+def introduce_drift(data, drift_probability=0.5):
+    random = np.random.rand()
     drifted_data = data.copy()
-    if np.random.rand() < drift_probability:
+    if random < drift_probability:
         #original_glucose = drifted_data['Glucose'].values[0]
         #original_bmi = drifted_data['BMI'].values[0]
-        drifted_data['Glucose'] *= np.random.uniform(3.0, 5.0) 
-        drifted_data['BMI'] *= np.random.uniform(0.2, 0.5)
+        #drifted_data['Glucose'] = round(drifted_data['Glucose'] + np.random.randint(30, 100))
+        #drifted_data['BMI'] = round(drifted_data['BMI'] + np.random.normal(-5, 5), 1)
         #print(f"Original Glucose: {original_glucose}, Drifted Glucose: {drifted_data['Glucose'].values[0]}")
         #print(f"Original BMI: {original_bmi}, Drifted BMI: {drifted_data['BMI'].values[0]}")
+        print("random :", random)
+        print("drift_probability :", drift_probability)
     return drifted_data
 
 
 
 # Data ingestion with drift introduction
-def ingest_data_stream_with_drift(df, drift_probability=1):
-    # Create an infinite iterator over the dataset
-    data_iterator = itertools.cycle(df.to_dict('records'))
+def ingest_data_stream_with_drift():
     while True:
-        data = next(data_iterator)
+    # Generate random data
+        data = generate_random_data()
         # Introduce drift with a certain probability
-        data_with_drift = introduce_drift(pd.DataFrame([data]), drift_probability)
+        data_with_drift = introduce_drift(data, 0.5)
         yield data_with_drift.to_dict('records')[0]
-        time.sleep(2)  # Introduce a 2-second delay
+        time.sleep(1) 
 
 
 # Drift detection
@@ -155,16 +157,6 @@ def notify_and_recommend(drift_detected, drift_scores, columns, model, X_test, y
         ]
     else:
         toast_message = "Aucune dérive des données n'a été détectée. (Modèle mise à jour)"
-    
-    # Calculate performance metrics after retraining or updating
-    accuracy, precision, recall, f1 = get_metrics(model, X_test, y_test)
-
-    # Print the new performance metrics
-    print(f"\nPerformance du modèle au {datetime.now()}:")
-    print(f"Accuracy: {accuracy:.2f}")
-    print(f"Precision: {precision:.2f}")
-    print(f"Recall: {recall:.2f}")
-    print(f"F1 Score: {f1:.2f}")
 
     return toast_message
 
@@ -182,13 +174,6 @@ def track_diabetic_distribution(df):
 
 
 # Save metrics and drifted data to files
-def save_metrics_and_data(drifted_data_list, accuracy_history, precision_history, recall_history, f1_history):
+def save_metrics_and_data(drifted_data_list, metrics):
     pd.DataFrame(drifted_data_list).to_csv('drifted_data.csv', index=False)
-    metrics_df = pd.DataFrame({
-        'Timestamp': [datetime.now()] * len(accuracy_history),
-        'Accuracy': accuracy_history,
-        'Precision': precision_history,
-        'Recall': recall_history,
-        'F1 Score': f1_history
-    })
-    metrics_df.to_csv('performance_metrics.csv', index=False)
+    pd.DataFrame(metrics).to_csv('performance_metrics.csv', index=False)
